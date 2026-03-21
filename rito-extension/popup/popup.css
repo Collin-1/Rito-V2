@@ -1,0 +1,196 @@
+:root {
+  color-scheme: light;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+body {
+  margin: 0;
+  width: 320px;
+  background: #f5f8f6;
+  color: #1f2933;
+}
+
+.rito-popup {
+  padding: 14px;
+}
+
+.rito-header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 500;
+}
+
+.rito-tagline {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #5f6c76;
+  text-transform: lowercase;
+}
+
+.rito-section {
+  border-top: 1px solid #dbe3dd;
+  padding-top: 12px;
+  margin-top: 12px;
+}
+
+.rito-mic-button {
+  width: 100%;
+  height: 48px;
+  border: 0;
+  border-radius: 8px;
+  background: #1a7a4a;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.rito-mic-button.rito-listening {
+  background: #c0392b;
+}
+
+.rito-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9ca3af;
+}
+
+.rito-dot.rito-dot-listening {
+  background: #ffffff;
+  animation: ritoPulse 1.1s infinite;
+}
+
+@keyframes ritoPulse {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.3;
+    transform: scale(1.35);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.rito-label {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #5f6c76;
+}
+
+.rito-value {
+  margin: 0;
+  font-size: 14px;
+  min-height: 20px;
+}
+
+.rito-row {
+  margin: 4px 0;
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.rito-status-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.rito-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.rito-status-idle {
+  background: #9ca3af;
+}
+
+.rito-status-success {
+  background: #27ae60;
+}
+
+.rito-status-error {
+  background: #e74c3c;
+}
+
+.rito-key-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+.rito-manual-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+}
+
+#ritoManualCommand {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #b8c5bd;
+  border-radius: 6px;
+  height: 34px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+#ritoSendCommand {
+  border: 0;
+  border-radius: 6px;
+  background: #355e4f;
+  color: #ffffff;
+  padding: 0 12px;
+  height: 34px;
+  cursor: pointer;
+}
+
+#ritoApiKey {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #b8c5bd;
+  border-radius: 6px;
+  height: 34px;
+  padding: 0 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+#ritoSaveKey {
+  border: 0;
+  border-radius: 6px;
+  background: #204e3f;
+  color: #ffffff;
+  padding: 0 12px;
+  height: 34px;
+  cursor: pointer;
+}
+
+.rito-warning {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #b42318;
+}
+
+.rito-help-link {
+  margin-top: 8px;
+  display: inline-block;
+  font-size: 11px;
+  color: #5f6c76;
+  text-decoration: none;
+}
+
+.rito-help-link:hover {
+  text-decoration: underline;
+}
