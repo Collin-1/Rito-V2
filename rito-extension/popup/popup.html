@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rito</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="rito-popup">
+      <header class="rito-header">
+        <h1>Rito</h1>
+        <p class="rito-tagline">speak to navigate</p>
+      </header>
+
+      <section class="rito-section">
+        <button id="ritoMicButton" class="rito-mic-button" type="button">
+          <span id="ritoMicDot" class="rito-dot rito-dot-idle"></span>
+          <span id="ritoMicLabel">Start listening</span>
+        </button>
+      </section>
+
+      <section class="rito-section">
+        <label for="ritoManualCommand" class="rito-label"
+          >Type a command (fallback)</label
+        >
+        <div class="rito-manual-row">
+          <input
+            id="ritoManualCommand"
+            type="text"
+            autocomplete="off"
+            placeholder="e.g. scroll down"
+          />
+          <button id="ritoSendCommand" type="button">Send</button>
+        </div>
+      </section>
+
+      <section class="rito-section">
+        <p class="rito-label">You said:</p>
+        <p id="ritoTranscript" class="rito-value">"..."</p>
+      </section>
+
+      <section class="rito-section">
+        <p class="rito-row">
+          <span>Action:</span> <span id="ritoAction">idle</span>
+        </p>
+        <p class="rito-row">
+          <span>Status:</span>
+          <span class="rito-status-wrap">
+            <span
+              id="ritoStatusDot"
+              class="rito-status-dot rito-status-idle"
+            ></span>
+            <span id="ritoStatusText">Idle</span>
+          </span>
+        </p>
+      </section>
+
+      <section class="rito-section">
+        <label for="ritoApiKey" class="rito-label">Groq API Key</label>
+        <div class="rito-key-row">
+          <input
+            id="ritoApiKey"
+            type="password"
+            autocomplete="off"
+            placeholder="sk-..."
+          />
+          <button id="ritoSaveKey" type="button">Save</button>
+        </div>
+        <p id="ritoKeyWarning" class="rito-warning" hidden>
+          Add your Groq API key below to activate Rito
+        </p>
+        <a
+          class="rito-help-link"
+          href="https://groq.com"
+          target="_blank"
+          rel="noreferrer noopener"
+          >Get a free key at groq.com ↗</a
+        >
+      </section>
+    </main>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
