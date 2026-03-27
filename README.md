@@ -282,6 +282,6 @@ Use this sequence when presenting:
 2. `search calculus on youtube`
 3. On a finance site: `find investments on current website`
 4. On any content site: `summarize this site`
-5. Click `🎤 Speak` and say `tell me about this site`
+5. Click `Speak` and say `tell me about this site`
 
 This demonstrates navigation, on-page automation, contextual site understanding, and voice input.
