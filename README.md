@@ -108,7 +108,7 @@ Runs inside web pages and manipulates page DOM:
 
 ## 2) Voice command flow
 
-1. User clicks `🎤 Speak`.
+1. User clicks `Speak`.
 2. `popup.js` starts speech recognition.
 3. Recognized transcript is inserted into input.
 4. Same run flow as text command is triggered automatically.
