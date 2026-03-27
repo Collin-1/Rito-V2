@@ -220,9 +220,13 @@ function initializeContentSpeechRecognition() {
   let shouldRestart = true;
   let waitingForCommand = false;
   let wakeHeardAt = 0;
+  let lastWakeDetectedAt = 0;
+  let commandCooldownUntil = 0;
   let restartDelayMs = TAKEOVER_RETRY_MS;
   let restartTimerId = null;
   let micBusyMode = false;
+  const WAKE_LOG_COOLDOWN_MS = 1200;
+  const COMMAND_COOLDOWN_MS = 2500;
 
   function setRitoButtonLabel(text) {
     if (!ritoButton) {
@@ -263,8 +267,13 @@ function initializeContentSpeechRecognition() {
       const result = event.results[i];
       const transcriptRaw = result[0]?.transcript?.trim() || "";
       const transcript = transcriptRaw.toLowerCase();
+      const now = Date.now();
 
       if (!transcript) {
+        continue;
+      }
+
+      if (now < commandCooldownUntil) {
         continue;
       }
 
@@ -272,7 +281,7 @@ function initializeContentSpeechRecognition() {
         console.log("Transcript:", transcript);
       }
 
-      if (waitingForCommand && Date.now() - wakeHeardAt > 8000) {
+      if (waitingForCommand && now - wakeHeardAt > 8000) {
         waitingForCommand = false;
       }
 
@@ -283,10 +292,15 @@ function initializeContentSpeechRecognition() {
 
       if (!result.isFinal) {
         if (!waitingForCommand && wakeDetected) {
+          if (now - lastWakeDetectedAt < WAKE_LOG_COOLDOWN_MS) {
+            continue;
+          }
+
+          lastWakeDetectedAt = now;
           setWakeDotState(wakeDot, "wake");
           console.log("Wake word detected");
           waitingForCommand = true;
-          wakeHeardAt = Date.now();
+          wakeHeardAt = now;
           setTimeout(() => {
             setWakeDotState(wakeDot, "listening");
           }, 900);
@@ -295,11 +309,15 @@ function initializeContentSpeechRecognition() {
       }
 
       if (wakeDetected && inlineCommand) {
+        if (now - lastWakeDetectedAt >= WAKE_LOG_COOLDOWN_MS) {
+          lastWakeDetectedAt = now;
+          console.log("Wake word detected");
+        }
         setWakeDotState(wakeDot, "wake");
-        console.log("Wake word detected");
         console.log("Command:", inlineCommand);
         chrome.runtime.sendMessage({ command: inlineCommand });
         waitingForCommand = false;
+        commandCooldownUntil = now + COMMAND_COOLDOWN_MS;
         setTimeout(() => {
           setWakeDotState(wakeDot, "listening");
         }, 1200);
@@ -307,10 +325,15 @@ function initializeContentSpeechRecognition() {
       }
 
       if (wakeDetected && !waitingForCommand) {
+        if (now - lastWakeDetectedAt < WAKE_LOG_COOLDOWN_MS) {
+          continue;
+        }
+
+        lastWakeDetectedAt = now;
         setWakeDotState(wakeDot, "wake");
         console.log("Wake word detected");
         waitingForCommand = true;
-        wakeHeardAt = Date.now();
+        wakeHeardAt = now;
         setTimeout(() => {
           setWakeDotState(wakeDot, "listening");
         }, 1200);
@@ -325,6 +348,7 @@ function initializeContentSpeechRecognition() {
         console.log("Command:", transcript);
         chrome.runtime.sendMessage({ command: transcript });
         waitingForCommand = false;
+        commandCooldownUntil = now + COMMAND_COOLDOWN_MS;
       }
     }
   };
@@ -482,8 +506,223 @@ function createRitoUI() {
 createRitoUI();
 document.addEventListener("DOMContentLoaded", createRitoUI);
 
+function findYoutubeVideoElement() {
+  return document.querySelector("video");
+}
+
+function clickYoutubeControl(selectors) {
+  for (const selector of selectors) {
+    const element = document.querySelector(selector);
+    if (element) {
+      element.click();
+      return true;
+    }
+  }
+  return false;
+}
+
+function getVisibleYoutubeVideoLinks() {
+  const candidates = Array.from(
+    document.querySelectorAll(
+      "a#video-title, ytd-rich-item-renderer a#video-title",
+    ),
+  );
+
+  return candidates.filter((link) => {
+    const rect = link.getBoundingClientRect();
+    const hasSize = rect.width > 0 && rect.height > 0;
+    const inViewport = rect.bottom > 0 && rect.top < window.innerHeight;
+    return hasSize && inViewport;
+  });
+}
+
+function openFirstVisibleYoutubeVideo() {
+  const visibleLinks = getVisibleYoutubeVideoLinks();
+  const firstVideo = visibleLinks[0];
+  if (firstVideo) {
+    firstVideo.click();
+    console.log("Opened first visible YouTube video.");
+    return true;
+  }
+
+  const fallback = document.querySelector(
+    "ytd-video-renderer a#video-title, a#video-title",
+  );
+  if (fallback) {
+    fallback.click();
+    console.log("Opened first fallback YouTube video.");
+    return true;
+  }
+
+  console.log("No YouTube video link found to open.");
+  return false;
+}
+
+function openMatchingVisibleYoutubeVideo(query) {
+  const normalizedQuery = String(query || "")
+    .toLowerCase()
+    .trim();
+  if (!normalizedQuery) {
+    return openFirstVisibleYoutubeVideo();
+  }
+
+  const visibleLinks = getVisibleYoutubeVideoLinks();
+  const match = visibleLinks.find((link) =>
+    String(link.textContent || "")
+      .toLowerCase()
+      .includes(normalizedQuery),
+  );
+
+  if (match) {
+    match.click();
+    console.log("Opened visible YouTube match:", query);
+    return true;
+  }
+
+  console.log("No visible YouTube match found for:", query);
+  return false;
+}
+
+function openVisibleYoutubeVideoByNumber(videoNumber) {
+  const number = Number(videoNumber);
+  if (!Number.isInteger(number) || number <= 0) {
+    console.log("Invalid video number:", videoNumber);
+    return false;
+  }
+
+  const visibleLinks = getVisibleYoutubeVideoLinks();
+  const index = number - 1;
+  const target = visibleLinks[index];
+
+  if (target) {
+    target.click();
+    console.log("Opened visible YouTube video number:", number);
+    return true;
+  }
+
+  console.log(
+    `Video number ${number} is not visible. Visible count: ${visibleLinks.length}`,
+  );
+  return false;
+}
+
+function handleYoutubeAction(message) {
+  const action = message?.action;
+  const query = message?.query || "";
+  const videoNumber = message?.videoNumber;
+
+  if (!/youtube\.com/i.test(location.hostname)) {
+    console.log("YouTube action ignored: not on YouTube.");
+    return;
+  }
+
+  const video = findYoutubeVideoElement();
+
+  if (action === "youtube-play") {
+    if (video) {
+      video.play().catch(() => {
+        // Ignore autoplay restrictions; button fallback below.
+      });
+      console.log("Attempted to play video element.");
+      return;
+    }
+
+    const clicked = clickYoutubeControl([
+      ".ytp-play-button",
+      "button[title='Play (k)']",
+      "button[aria-label*='Play']",
+    ]);
+    if (!clicked) {
+      openFirstVisibleYoutubeVideo();
+    }
+    return;
+  }
+
+  if (action === "youtube-pause") {
+    if (video) {
+      video.pause();
+      console.log("Paused video element.");
+      return;
+    }
+
+    clickYoutubeControl([
+      ".ytp-play-button",
+      "button[title='Pause (k)']",
+      "button[aria-label*='Pause']",
+    ]);
+    return;
+  }
+
+  if (action === "youtube-next") {
+    const clicked = clickYoutubeControl([
+      ".ytp-next-button",
+      "button[aria-keyshortcuts='SHIFT+n']",
+      "a.ytp-next-button",
+    ]);
+    if (!clicked && video) {
+      video.currentTime = Math.max(video.duration - 0.25, video.currentTime);
+    }
+    return;
+  }
+
+  if (action === "youtube-previous") {
+    const clicked = clickYoutubeControl([
+      ".ytp-prev-button",
+      "button[aria-keyshortcuts='SHIFT+p']",
+      "a.ytp-prev-button",
+    ]);
+    if (!clicked && video) {
+      video.currentTime = 0;
+    }
+    return;
+  }
+
+  if (action === "youtube-mute" || action === "youtube-unmute") {
+    if (video) {
+      video.muted = action === "youtube-mute";
+    }
+
+    clickYoutubeControl([
+      ".ytp-mute-button",
+      "button[aria-label*='Mute']",
+      "button[aria-label*='Unmute']",
+    ]);
+    return;
+  }
+
+  if (action === "youtube-open-first-result") {
+    openFirstVisibleYoutubeVideo();
+    return;
+  }
+
+  if (action === "youtube-open-first-visible") {
+    openFirstVisibleYoutubeVideo();
+    return;
+  }
+
+  if (action === "youtube-open-visible-match") {
+    const opened = openMatchingVisibleYoutubeVideo(query);
+    if (!opened) {
+      openFirstVisibleYoutubeVideo();
+    }
+    return;
+  }
+
+  if (action === "youtube-open-visible-number") {
+    const opened = openVisibleYoutubeVideoByNumber(videoNumber);
+    if (!opened) {
+      openFirstVisibleYoutubeVideo();
+    }
+  }
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log("Content script received message:", message);
+
+  if (String(message.action || "").startsWith("youtube-")) {
+    handleYoutubeAction(message);
+    return;
+  }
 
   if (message.action === "getPageData") {
     const links = Array.from(document.querySelectorAll("a")).map((link) => ({
