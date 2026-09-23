@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rito</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="panel" aria-live="polite">
+      <header class="panel-header">
+        <h1>Rito</h1>
+        <p class="subtitle">Voice-first browsing control</p>
+      </header>
+
+      <section class="status" aria-label="Current extension status">
+        <p id="statusText" class="status-text">Connecting to page...</p>
+        <p id="modeText" class="mode-text">Mode: commands</p>
+      </section>
+
+      <section class="actions" aria-label="Quick actions">
+        <button id="toggleListeningBtn" class="btn btn-primary" type="button">
+          Start listening
+        </button>
+        <div class="split-actions">
+          <button id="commandsModeBtn" class="btn" type="button">
+            Commands
+          </button>
+          <button id="dictationModeBtn" class="btn" type="button">
+            Dictation
+          </button>
+        </div>
+        <div class="split-actions">
+          <button id="showNumbersBtn" class="btn" type="button">
+            Show numbers
+          </button>
+          <button id="hideNumbersBtn" class="btn" type="button">
+            Hide numbers
+          </button>
+        </div>
+      </section>
+
+      <footer class="footer">
+        <button id="openSettingsBtn" class="link-btn" type="button">
+          Settings
+        </button>
+      </footer>
+    </main>
+
+    <script src="../src/shared/constants.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>
