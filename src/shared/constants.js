@@ -16,6 +16,10 @@
     aiModel: "llama-3.3-70b-versatile",
     aiRequestDebounceMs: 450,
     aiCacheTtlMs: 45000,
+    sttModel: "whisper-large-v3-turbo",
+    vadSilenceMs: 700,
+    vadMinSpeechMs: 300,
+    vadMaxUtteranceMs: 15000,
   };
 
   Rito.DEFAULT_RUNTIME_STATE = {
@@ -72,6 +76,18 @@
     "hey ritoh",
   ];
 
+  // Phrases Whisper tends to invent on silence or background noise.
+  Rito.STT_HALLUCINATIONS = [
+    "thank you",
+    "thank you very much",
+    "thanks",
+    "thanks for watching",
+    "thank you for watching",
+    "you",
+    "bye",
+    "subtitles by the amaraorg community",
+  ];
+
   Rito.PUNCTUATION_WORDS = {
     comma: ",",
     period: ".",
@@ -120,6 +136,7 @@
     UPDATE_AI_CONFIG: "RITO_UPDATE_AI_CONFIG",
     AI_PARSE_INTENT: "RITO_AI_PARSE_INTENT",
     AI_SUMMARIZE_PAGE: "RITO_AI_SUMMARIZE_PAGE",
+    STT_TRANSCRIBE: "RITO_STT_TRANSCRIBE",
     BROWSER_COMMAND: "RITO_BROWSER_COMMAND",
     GET_STATUS: "RITO_GET_STATUS",
     SET_LISTENING: "RITO_SET_LISTENING",

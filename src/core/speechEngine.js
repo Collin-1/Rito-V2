@@ -2,6 +2,13 @@
   const root = globalScope || globalThis;
   const Rito = (root.Rito = root.Rito || {});
 
+  const TARGET_SAMPLE_RATE = 16000;
+  const PRE_ROLL_MS = 300;
+  const MAX_INFLIGHT_REQUESTS = 2;
+  const LEVEL_EMIT_INTERVAL_MS = 100;
+
+  // Speech-to-text via Groq Whisper. Audio is captured locally, split into
+  // utterances with an energy-based VAD, and transcribed by the service worker.
   class SpeechEngine extends EventTarget {
     constructor(options) {
       super();
@@ -13,25 +20,25 @@
         opts.settings || {},
       );
       this.mode = Rito.COMMAND_MODES.COMMANDS;
-      this.recognition = null;
       this.shouldRun = false;
       this.isListening = false;
-      this.restartTimer = null;
+      this.paused = false;
       this.armedUntil = 0;
-      this.restartCount = 0;
       this.mediaStream = null;
       this.audioContext = null;
       this.analyser = null;
+      this.processor = null;
+      this.outputGain = null;
+      this.resumeOnGesture = null;
+      this.inflightRequests = 0;
+      this.cooldownUntil = 0;
+      this.lastLevelEmitAt = 0;
+      this._resetVadState();
+      this.noiseFloor = 0.005;
     }
 
     updateSettings(nextSettings) {
       this.settings = Object.assign({}, this.settings, nextSettings || {});
-      if (this.recognition) {
-        this.recognition.lang = this.settings.commandLanguage;
-        this.recognition.continuous = Boolean(
-          this.settings.continuousListening,
-        );
-      }
     }
 
     setMode(mode) {
@@ -43,35 +50,21 @@
         return;
       }
       this.shouldRun = true;
-
-      if (!this._getRecognitionCtor()) {
-        this._emit("error", {
-          code: "unsupported",
-          message:
-            "Speech recognition is not supported in this browser context.",
-        });
-        return;
-      }
-
-      if (!this.recognition) {
-        this._buildRecognition();
-      }
-
-      this._beginRecognition();
+      this.paused = false;
+      this._openMicrophone();
     }
 
     stop() {
       this.shouldRun = false;
+      this.paused = false;
       this.armedUntil = 0;
-      clearTimeout(this.restartTimer);
-      this.restartTimer = null;
+      this._resetVadState();
+      this._removeGestureResume();
 
-      if (this.recognition && this.isListening) {
-        try {
-          this.recognition.stop();
-        } catch (error) {
-          this.logger.debug("Ignoring stop error.", error);
-        }
+      if (this.processor) {
+        this.processor.onaudioprocess = null;
+        this.processor.disconnect();
+        this.processor = null;
       }
 
       if (this.mediaStream) {
@@ -82,100 +75,342 @@
       }
 
       if (this.audioContext) {
-        this.audioContext.close();
+        this.audioContext.close().catch(() => undefined);
         this.audioContext = null;
         this.analyser = null;
+        this.outputGain = null;
+      }
+
+      if (this.isListening) {
+        this.isListening = false;
+        this._emit("listening-state", { listening: false });
       }
     }
 
     pause() {
-      // Temporary pause without stopping resources (for background tabs)
-      if (this.recognition && this.isListening) {
-        try {
-          this.recognition.stop();
-          this.logger.debug("Speech recognition paused");
-        } catch (error) {
-          this.logger.debug("Error pausing recognition", error);
-        }
+      // Temporary pause without releasing the microphone.
+      if (!this.isListening || this.paused) {
+        return;
       }
+      this.paused = true;
+      this._resetVadState();
+      if (this.audioContext) {
+        this.audioContext.suspend().catch(() => undefined);
+      }
+      this.logger.debug("Speech capture paused");
     }
 
     resume() {
-      // Resume after pause if shouldRun is still true
-      if (this.shouldRun && !this.isListening) {
-        this._beginRecognition();
-        this.logger.debug("Speech recognition resumed");
+      if (!this.shouldRun || !this.paused) {
+        return;
       }
+      this.paused = false;
+      if (this.audioContext) {
+        this.audioContext.resume().catch(() => undefined);
+      }
+      this.logger.debug("Speech capture resumed");
     }
 
-    _getRecognitionCtor() {
-      return root.SpeechRecognition || root.webkitSpeechRecognition || null;
-    }
+    async _openMicrophone() {
+      const AudioContext = root.AudioContext || root.webkitAudioContext;
+      const mediaDevices = root.navigator && root.navigator.mediaDevices;
+      if (!AudioContext || !mediaDevices || !mediaDevices.getUserMedia) {
+        this._fail("unsupported", "Microphone capture is not available here.");
+        return;
+      }
 
-    _buildRecognition() {
-      const SpeechRecognition = this._getRecognitionCtor();
-      this.recognition = new SpeechRecognition();
-      this.recognition.continuous = Boolean(this.settings.continuousListening);
-      this.recognition.interimResults = true;
-      this.recognition.lang = this.settings.commandLanguage;
-      this.recognition.maxAlternatives = 1;
+      let stream;
+      try {
+        stream = await mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+        });
+      } catch (error) {
+        const denied =
+          error &&
+          (error.name === "NotAllowedError" || error.name === "SecurityError");
+        this._fail(
+          denied ? "not-allowed" : "audio-capture",
+          denied
+            ? "Microphone permission denied - enable microphone access"
+            : "Microphone not working - check your audio settings",
+        );
+        return;
+      }
 
-      this.recognition.onstart = () => {
-        this.restartCount = 0;
-        this.isListening = true;
-        this._initializeAudioMonitoring();
-        this._emit("listening-state", { listening: true });
-        this.logger.debug("Speech recognition started");
-      };
-
-      this.recognition.onresult = (event) => {
-        this._handleResult(event);
-      };
-
-      this.recognition.onerror = (event) => {
-        this._handleError(event);
-      };
-
-      this.recognition.onend = () => {
-        this.isListening = false;
-        this._emit("listening-state", { listening: false });
-        if (this.shouldRun) {
-          this._scheduleRestart("onend");
-        }
-      };
-    }
-
-    _beginRecognition() {
-      clearTimeout(this.restartTimer);
-      this.restartTimer = null;
+      if (!this.shouldRun) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
 
       try {
-        this.recognition.start();
+        this.mediaStream = stream;
+        this.audioContext = new AudioContext();
+        const source = this.audioContext.createMediaStreamSource(stream);
+        this.analyser = this.audioContext.createAnalyser();
+        this.analyser.fftSize = 512;
+
+        // ScriptProcessor avoids audioWorklet.addModule, which page CSPs can block.
+        this.processor = this.audioContext.createScriptProcessor(4096, 1, 1);
+        this.processor.onaudioprocess = (event) => {
+          this._handleAudioFrame(event.inputBuffer.getChannelData(0));
+        };
+
+        // The processor only runs while connected to the destination; keep it silent.
+        this.outputGain = this.audioContext.createGain();
+        this.outputGain.gain.value = 0;
+
+        source.connect(this.analyser);
+        source.connect(this.processor);
+        this.processor.connect(this.outputGain);
+        this.outputGain.connect(this.audioContext.destination);
       } catch (error) {
-        if (String(error && error.message).includes("already started")) {
+        this.logger.warn("Failed to build audio pipeline", error);
+        this._fail("audio-capture", "Could not start audio processing.");
+        return;
+      }
+
+      if (this.audioContext.state === "suspended") {
+        await this.audioContext.resume().catch(() => undefined);
+        if (this.audioContext && this.audioContext.state === "suspended") {
+          this._installGestureResume();
+        }
+      }
+
+      this.isListening = true;
+      this._emit("listening-state", { listening: true });
+      this.logger.debug("Speech capture started", {
+        sampleRate: this.audioContext.sampleRate,
+      });
+    }
+
+    // Autoplay policy can leave the context suspended until the user interacts.
+    _installGestureResume() {
+      this._removeGestureResume();
+      this.resumeOnGesture = () => {
+        if (this.audioContext && !this.paused) {
+          this.audioContext.resume().catch(() => undefined);
+        }
+        this._removeGestureResume();
+      };
+      root.addEventListener("pointerdown", this.resumeOnGesture, true);
+      root.addEventListener("keydown", this.resumeOnGesture, true);
+    }
+
+    _removeGestureResume() {
+      if (!this.resumeOnGesture) {
+        return;
+      }
+      root.removeEventListener("pointerdown", this.resumeOnGesture, true);
+      root.removeEventListener("keydown", this.resumeOnGesture, true);
+      this.resumeOnGesture = null;
+    }
+
+    _fail(code, message) {
+      this.logger.error(`Speech capture error: ${message}`);
+      this._emit("error", { code, message });
+      this.stop();
+    }
+
+    _resetVadState() {
+      this.speaking = false;
+      this.preRoll = [];
+      this.preRollMs = 0;
+      this.utterance = [];
+      this.utteranceMs = 0;
+      this.speechMs = 0;
+      this.silenceMs = 0;
+    }
+
+    _speechThreshold() {
+      // Higher sensitivity setting = stricter (matches the options page copy).
+      const sensitivity = Math.max(
+        0,
+        Math.min(1, Number(this.settings.microphoneSensitivity) || 0),
+      );
+      const multiplier = 1.8 + sensitivity * 3;
+      const absoluteMin = 0.006 + sensitivity * 0.01;
+      return Math.max(absoluteMin, this.noiseFloor * multiplier);
+    }
+
+    _handleAudioFrame(channelData) {
+      if (!this.isListening || this.paused || !this.audioContext) {
+        return;
+      }
+
+      const frame = new Float32Array(channelData);
+      const frameMs = (frame.length / this.audioContext.sampleRate) * 1000;
+
+      let sumSquares = 0;
+      for (let i = 0; i < frame.length; i += 1) {
+        sumSquares += frame[i] * frame[i];
+      }
+      const rms = Math.sqrt(sumSquares / frame.length);
+
+      this._emitAudioLevel();
+
+      if (Date.now() < this.cooldownUntil) {
+        return;
+      }
+
+      const isSpeech = rms > this._speechThreshold();
+
+      if (!this.speaking) {
+        if (isSpeech) {
+          this.speaking = true;
+          this.utterance = this.preRoll.concat([frame]);
+          this.utteranceMs = this.preRollMs + frameMs;
+          this.speechMs = frameMs;
+          this.silenceMs = 0;
+          this.preRoll = [];
+          this.preRollMs = 0;
+          this._emit("interim-transcript", { text: "…" });
           return;
         }
-        this.logger.warn("Recognition failed to start, retrying.", error);
-        this._scheduleRestart("start_failed");
+
+        this.noiseFloor = Math.max(0.001, this.noiseFloor * 0.95 + rms * 0.05);
+        this.preRoll.push(frame);
+        this.preRollMs += frameMs;
+        while (this.preRollMs > PRE_ROLL_MS && this.preRoll.length > 1) {
+          const dropped = this.preRoll.shift();
+          this.preRollMs -= (dropped.length / this.audioContext.sampleRate) * 1000;
+        }
+        return;
+      }
+
+      this.utterance.push(frame);
+      this.utteranceMs += frameMs;
+      if (isSpeech) {
+        this.speechMs += frameMs;
+        this.silenceMs = 0;
+      } else {
+        this.silenceMs += frameMs;
+      }
+
+      if (
+        this.silenceMs >= Number(this.settings.vadSilenceMs || 700) ||
+        this.utteranceMs >= Number(this.settings.vadMaxUtteranceMs || 15000)
+      ) {
+        this._finalizeUtterance();
       }
     }
 
-    _scheduleRestart(reason) {
+    _emitAudioLevel() {
+      const now = Date.now();
+      if (!this.analyser || now - this.lastLevelEmitAt < LEVEL_EMIT_INTERVAL_MS) {
+        return;
+      }
+      this.lastLevelEmitAt = now;
+
+      const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+      this.analyser.getByteFrequencyData(dataArray);
+      const average =
+        dataArray.reduce((a, b) => a + b, 0) / dataArray.length / 255;
+      const audioLevel = Math.round(average * 100);
+
+      if (audioLevel > 5) {
+        this._emit("audio-level", { level: audioLevel });
+      }
+    }
+
+    _finalizeUtterance() {
+      const frames = this.utterance;
+      const speechMs = this.speechMs;
+      const sampleRate = this.audioContext.sampleRate;
+      this._resetVadState();
+
+      if (speechMs < Number(this.settings.vadMinSpeechMs || 300)) {
+        this.logger.debug("Discarding short noise burst", { speechMs });
+        return;
+      }
+
+      if (this.inflightRequests >= MAX_INFLIGHT_REQUESTS) {
+        this.logger.debug("Dropping utterance, transcription backlog full");
+        this._emit("ignored", { reason: "busy", transcript: "" });
+        return;
+      }
+
+      const wav = this._encodeWav(this._downsample(frames, sampleRate));
+      this._transcribe(this._toBase64(wav));
+    }
+
+    async _transcribe(audioBase64) {
+      this.inflightRequests += 1;
+      this._emit("interim-transcript", { text: "Transcribing…" });
+
+      let response;
+      try {
+        response = await chrome.runtime.sendMessage({
+          type: Rito.MESSAGE_TYPES.STT_TRANSCRIBE,
+          payload: { audioBase64, mimeType: "audio/wav" },
+        });
+      } catch (error) {
+        response = {
+          ok: false,
+          code: "network",
+          error: String(error && error.message),
+        };
+      } finally {
+        this.inflightRequests -= 1;
+      }
+
       if (!this.shouldRun) {
         return;
       }
 
-      this.restartCount += 1;
-      const delay = Math.min(4000, 500 + this.restartCount * 300);
-      this.logger.debug("Scheduling speech restart.", { reason, delay });
+      if (!response || !response.ok) {
+        this._handleTranscriptionError(response || {});
+        return;
+      }
 
-      clearTimeout(this.restartTimer);
-      this.restartTimer = setTimeout(() => {
-        if (!this.shouldRun) {
-          return;
-        }
-        this._beginRecognition();
-      }, delay);
+      this._processTranscript(response.data || {});
+    }
+
+    _handleTranscriptionError(response) {
+      const code = String(response.code || "network");
+      const descriptions = {
+        "no-api-key": "Add a Groq API key in Rito settings to enable voice",
+        "invalid-api-key": "Groq API key was rejected - check Rito settings",
+        rate_limited: "Groq free-tier limit reached - pausing briefly",
+        "network-timeout": "Transcription timed out - please try again",
+        network: "Network error - check your internet connection",
+      };
+      const message =
+        descriptions[code] || `Speech recognition error: ${response.error}`;
+
+      this.logger.warn(`Transcription failed: ${message}`, response.error);
+      this._emit("error", { code, message });
+
+      if (code === "no-api-key" || code === "invalid-api-key") {
+        this.stop();
+        return;
+      }
+
+      if (code === "rate_limited") {
+        this.cooldownUntil = Date.now() + Number(response.retryAfterMs || 10000);
+        this._resetVadState();
+      }
+    }
+
+    _processTranscript(result) {
+      const transcript = String(result.text || "").trim();
+      const confidence = Number(result.confidence || 0);
+      const normalized = Rito.fuzzy.normalizeText(transcript);
+      const hallucinations = Array.isArray(Rito.STT_HALLUCINATIONS)
+        ? Rito.STT_HALLUCINATIONS
+        : [];
+
+      if (result.noSpeech || !normalized || hallucinations.includes(normalized)) {
+        this.logger.debug("Transcript discarded as non-speech", { transcript });
+        this._emit("ignored", { reason: "no_speech", transcript, confidence });
+        return;
+      }
+
+      this._acceptFinalTranscript(transcript, confidence);
     }
 
     _applyHotwordGate(originalText) {
@@ -441,173 +676,144 @@
         .trim();
     }
 
-    _handleResult(event) {
-      let interimText = "";
+    _acceptFinalTranscript(transcript, confidence) {
+      const baseSensitivity = Math.max(
+        0,
+        Math.min(1, this.settings.microphoneSensitivity * 0.5),
+      );
+      const confidenceBoost =
+        String(this.settings.commandActivationMode) ===
+          String(Rito.ACTIVATION_MODES.WAKE_PHRASE)
+          ? 0.14
+          : 0.1;
+      const minConfidence = Math.max(0, baseSensitivity - confidenceBoost);
+      const gateResult = this._applyHotwordGate(transcript);
 
-      for (let i = event.resultIndex; i < event.results.length; i += 1) {
-        const result = event.results[i];
-        const alternative = result[0] || { transcript: "", confidence: 0 };
-        const transcript = String(alternative.transcript || "").trim();
-        const confidence = Number(alternative.confidence || 0);
-
-        if (!transcript) {
-          continue;
-        }
-
-        if (result.isFinal) {
-          const baseSensitivity = Math.max(
-            0,
-            Math.min(1, this.settings.microphoneSensitivity * 0.5),
-          );
-          const confidenceBoost =
-            String(this.settings.commandActivationMode) ===
-              String(Rito.ACTIVATION_MODES.WAKE_PHRASE)
-              ? 0.14
-              : 0.1;
-          const minConfidence = Math.max(0, baseSensitivity - confidenceBoost);
-          const gateResult = this._applyHotwordGate(transcript);
-
-          if (!gateResult.accepted) {
-            this.logger.debug("Transcript rejected by hotword gate", {
-              reason: gateResult.reason,
-              transcript,
-            });
-            this._emit("ignored", {
-              reason: gateResult.reason,
-              transcript,
-              confidence,
-            });
-            continue;
-          }
-
-          if (confidence > 0 && confidence < minConfidence) {
-            this.logger.debug("Transcript rejected by confidence threshold", {
-              transcript,
-              confidence,
-              minConfidence,
-            });
-            this._emit("ignored", {
-              reason: "low_confidence",
-              transcript,
-              confidence,
-            });
-            continue;
-          }
-
-          this.logger.debug("Final transcript accepted", {
-            text: gateResult.text,
-            confidence,
-          });
-          this._emit("final-transcript", {
-            text: gateResult.text,
-            confidence,
-            originalText: transcript,
-          });
-        } else {
-          interimText += `${transcript} `;
-        }
-      }
-
-      if (interimText.trim()) {
-        this._emit("interim-transcript", { text: interimText.trim() });
-      }
-    }
-
-    _handleError(event) {
-      const errorCode = event && event.error ? String(event.error) : "unknown";
-
-      // Map error codes to user-friendly descriptions
-      const errorDescriptions = {
-        "no-speech": "No speech detected - listening paused",
-        "audio-capture": "Microphone not working - check your audio settings",
-        "network": "Network error - check your internet connection",
-        "network-timeout": "Network timeout - please try again",
-        "not-allowed": "Microphone permission denied - enable microphone access",
-        "service-not-allowed": "Speech recognition service not available in your region",
-        "bad-grammar": "Grammar format error",
-        "aborted": "Speech recognition was aborted",
-      };
-
-      const description = errorDescriptions[errorCode] || `Speech recognition error: ${errorCode}`;
-
-      // Log no-speech as debug to reduce console noise
-      if (errorCode === "no-speech") {
-        this.logger.debug(`Speech recognition: ${description}`);
-      } else {
-        this.logger.warn(`Speech recognition error: ${description}`);
-      }
-
-      this._emit("error", {
-        code: errorCode,
-        message: description,
-      });
-
-      // Fatal errors - stop attempting restart
-      if (errorCode === "not-allowed" || errorCode === "service-not-allowed") {
-        this.logger.error("Fatal error - microphone access not available");
-        this.shouldRun = false;
+      if (!gateResult.accepted) {
+        this.logger.debug("Transcript rejected by hotword gate", {
+          reason: gateResult.reason,
+          transcript,
+        });
+        this._emit("ignored", {
+          reason: gateResult.reason,
+          transcript,
+          confidence,
+        });
         return;
       }
 
-      // Recoverable errors - schedule restart
-      if (this.shouldRun && errorCode !== "aborted") {
-        this._scheduleRestart("onerror");
+      if (confidence > 0 && confidence < minConfidence) {
+        this.logger.debug("Transcript rejected by confidence threshold", {
+          transcript,
+          confidence,
+          minConfidence,
+        });
+        this._emit("ignored", {
+          reason: "low_confidence",
+          transcript,
+          confidence,
+        });
+        return;
       }
+
+      this.logger.debug("Final transcript accepted", {
+        text: gateResult.text,
+        confidence,
+      });
+      this._emit("final-transcript", {
+        text: gateResult.text,
+        confidence,
+        originalText: transcript,
+      });
+    }
+
+    _downsample(frames, sourceRate) {
+      let totalLength = 0;
+      for (const frame of frames) {
+        totalLength += frame.length;
+      }
+      const merged = new Float32Array(totalLength);
+      let offset = 0;
+      for (const frame of frames) {
+        merged.set(frame, offset);
+        offset += frame.length;
+      }
+
+      if (sourceRate <= TARGET_SAMPLE_RATE) {
+        return merged;
+      }
+
+      // Box-filter decimation: average the source samples in each output slot.
+      const ratio = sourceRate / TARGET_SAMPLE_RATE;
+      const outputLength = Math.floor(merged.length / ratio);
+      const output = new Float32Array(outputLength);
+      for (let i = 0; i < outputLength; i += 1) {
+        const start = Math.floor(i * ratio);
+        const end = Math.min(merged.length, Math.floor((i + 1) * ratio));
+        let sum = 0;
+        for (let j = start; j < end; j += 1) {
+          sum += merged[j];
+        }
+        output[i] = sum / Math.max(1, end - start);
+      }
+      return output;
+    }
+
+    _encodeWav(samples) {
+      const sampleRate = Math.min(
+        TARGET_SAMPLE_RATE,
+        this.audioContext ? this.audioContext.sampleRate : TARGET_SAMPLE_RATE,
+      );
+      const buffer = new ArrayBuffer(44 + samples.length * 2);
+      const view = new DataView(buffer);
+      const writeString = (position, text) => {
+        for (let i = 0; i < text.length; i += 1) {
+          view.setUint8(position + i, text.charCodeAt(i));
+        }
+      };
+
+      writeString(0, "RIFF");
+      view.setUint32(4, 36 + samples.length * 2, true);
+      writeString(8, "WAVE");
+      writeString(12, "fmt ");
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM
+      view.setUint16(22, 1, true); // mono
+      view.setUint32(24, sampleRate, true);
+      view.setUint32(28, sampleRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeString(36, "data");
+      view.setUint32(40, samples.length * 2, true);
+
+      let offset = 44;
+      for (let i = 0; i < samples.length; i += 1) {
+        const clamped = Math.max(-1, Math.min(1, samples[i]));
+        view.setInt16(
+          offset,
+          clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff,
+          true,
+        );
+        offset += 2;
+      }
+
+      return new Uint8Array(buffer);
+    }
+
+    _toBase64(bytes) {
+      let binary = "";
+      const chunkSize = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode.apply(
+          null,
+          bytes.subarray(i, i + chunkSize),
+        );
+      }
+      return root.btoa(binary);
     }
 
     _emit(type, detail) {
       this.dispatchEvent(new CustomEvent(type, { detail: detail || {} }));
-    }
-
-    _initializeAudioMonitoring() {
-      if (this.analyser) {
-        return;
-      }
-
-      const AudioContext = root.AudioContext || root.webkitAudioContext;
-      if (!AudioContext) {
-        this.logger.debug("AudioContext not available for monitoring");
-        return;
-      }
-
-      try {
-        this.audioContext = new AudioContext();
-        navigator.mediaDevices
-          .getUserMedia({ audio: true })
-          .then((stream) => {
-            this.mediaStream = stream;
-            const source = this.audioContext.createMediaStreamSource(stream);
-            this.analyser = this.audioContext.createAnalyser();
-            source.connect(this.analyser);
-            this._monitorAudioLevel();
-          })
-          .catch((error) => {
-            this.logger.debug("Audio monitoring permission denied", error);
-          });
-      } catch (error) {
-        this.logger.debug("Failed to initialize audio monitoring", error);
-      }
-    }
-
-    _monitorAudioLevel() {
-      if (!this.isListening || !this.analyser) {
-        return;
-      }
-
-      const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
-      this.analyser.getByteFrequencyData(dataArray);
-
-      const average =
-        dataArray.reduce((a, b) => a + b) / dataArray.length / 255;
-      const audioLevel = Math.round(average * 100);
-
-      if (audioLevel > 5) {
-        this._emit("audio-level", { level: audioLevel });
-      }
-
-      requestAnimationFrame(() => {
-        this._monitorAudioLevel();
-      });
     }
   }
 

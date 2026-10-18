@@ -343,6 +343,12 @@
         overlayUI.showFeedback("Microphone permission denied", "error", 2200);
       } else if (code === "audio-capture") {
         overlayUI.showFeedback("No microphone input detected", "warning", 2000);
+      } else if (
+        code === "no-api-key" ||
+        code === "invalid-api-key" ||
+        code === "rate_limited"
+      ) {
+        overlayUI.showFeedback(event.detail.message, "error", 3500);
       } else if (code === "unsupported") {
         overlayUI.showFeedback(
           "Speech recognition not supported on this page",

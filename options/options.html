@@ -18,16 +18,55 @@
 
       <form id="settingsForm" class="settings-form">
         <section class="card">
+          <h2>Groq connection (required)</h2>
+          <p class="help">
+            Rito uses Groq to understand your voice. Get a free key at
+            <a href="https://console.groq.com/keys" target="_blank" rel="noopener"
+              >console.groq.com/keys</a
+            >
+            and paste it below.
+          </p>
+
+          <label for="aiApiKey">Groq API key</label>
+          <input
+            id="aiApiKey"
+            name="aiApiKey"
+            type="password"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="gsk_..."
+          />
+
+          <div class="inline-actions">
+            <button id="clearApiKeyBtn" type="button" class="ghost-btn">
+              Clear saved key
+            </button>
+            <span id="apiKeyState" class="help"></span>
+          </div>
+        </section>
+
+        <section class="card">
           <h2>Speech</h2>
 
           <label for="commandLanguage">Command language</label>
           <select id="commandLanguage" name="commandLanguage">
             <option value="en-US">English (United States)</option>
             <option value="en-GB">English (United Kingdom)</option>
+            <option value="en-ZA">English (South Africa)</option>
             <option value="fr-FR">French (France)</option>
             <option value="pt-BR">Portuguese (Brazil)</option>
             <option value="es-ES">Spanish (Spain)</option>
             <option value="de-DE">German (Germany)</option>
+          </select>
+
+          <label for="sttModel">Speech recognition model</label>
+          <select id="sttModel" name="sttModel">
+            <option value="whisper-large-v3-turbo">
+              Whisper Large v3 Turbo (fast, recommended)
+            </option>
+            <option value="whisper-large-v3">
+              Whisper Large v3 (most accurate, slightly slower)
+            </option>
           </select>
 
           <label for="microphoneSensitivity"
@@ -107,10 +146,10 @@
         </section>
 
         <section class="card">
-          <h2>AI intent and summarization</h2>
+          <h2>AI page summaries (optional)</h2>
           <p class="help">
-            AI parsing runs through the background worker so your API key stays
-            out of page context.
+            Uses your Groq key to power "summarize this page". Requests run
+            through the background worker so your key stays out of web pages.
           </p>
 
           <label class="switch-row">
@@ -119,63 +158,54 @@
               name="aiIntentEnabled"
               type="checkbox"
             />
-            <span>Enable AI intent recognition (Groq)</span>
+            <span>Enable AI features</span>
           </label>
 
-          <label for="aiModel">Groq model</label>
-          <input
-            id="aiModel"
-            name="aiModel"
-            type="text"
-            placeholder="llama-3.3-70b-versatile"
-          />
+          <label for="aiModel">Summary model</label>
+          <select id="aiModel" name="aiModel">
+            <option value="llama-3.3-70b-versatile">
+              Llama 3.3 70B (recommended)
+            </option>
+            <option value="llama-3.1-8b-instant">
+              Llama 3.1 8B Instant (fastest)
+            </option>
+            <option value="openai/gpt-oss-120b">GPT-OSS 120B (smartest, slower)</option>
+            <option value="openai/gpt-oss-20b">GPT-OSS 20B</option>
+          </select>
 
-          <label for="aiApiKey">Groq API key</label>
-          <input
-            id="aiApiKey"
-            name="aiApiKey"
-            type="password"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="gsk_..."
-          />
+          <details class="advanced">
+            <summary>Advanced</summary>
 
-          <div class="inline-actions">
-            <button id="clearApiKeyBtn" type="button" class="ghost-btn">
-              Clear saved key
-            </button>
-            <span id="apiKeyState" class="help"></span>
-          </div>
+            <label for="aiTimeoutMs">AI request timeout (ms)</label>
+            <input
+              id="aiTimeoutMs"
+              name="aiTimeoutMs"
+              type="number"
+              min="3000"
+              max="60000"
+              step="500"
+            />
 
-          <label for="aiTimeoutMs">AI request timeout (ms)</label>
-          <input
-            id="aiTimeoutMs"
-            name="aiTimeoutMs"
-            type="number"
-            min="3000"
-            max="60000"
-            step="500"
-          />
+            <label for="aiRequestDebounceMs">AI request debounce (ms)</label>
+            <input
+              id="aiRequestDebounceMs"
+              name="aiRequestDebounceMs"
+              type="number"
+              min="100"
+              max="2500"
+              step="50"
+            />
 
-          <label for="aiRequestDebounceMs">AI request debounce (ms)</label>
-          <input
-            id="aiRequestDebounceMs"
-            name="aiRequestDebounceMs"
-            type="number"
-            min="100"
-            max="2500"
-            step="50"
-          />
-
-          <label for="aiCacheTtlMs">AI cache duration (ms)</label>
-          <input
-            id="aiCacheTtlMs"
-            name="aiCacheTtlMs"
-            type="number"
-            min="1000"
-            max="300000"
-            step="500"
-          />
+            <label for="aiCacheTtlMs">AI cache duration (ms)</label>
+            <input
+              id="aiCacheTtlMs"
+              name="aiCacheTtlMs"
+              type="number"
+              min="1000"
+              max="300000"
+              step="500"
+            />
+          </details>
         </section>
 
         <section class="card">
