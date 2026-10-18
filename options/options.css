@@ -70,6 +70,7 @@ label {
 
 input[type="text"],
 input[type="number"],
+input[type="password"],
 select {
   width: 100%;
   border: 1px solid var(--stroke);
@@ -177,4 +178,20 @@ output {
   .command-row {
     grid-template-columns: 1fr;
   }
+}
+
+.advanced {
+  display: grid;
+  gap: 10px;
+}
+
+.advanced[open] {
+  padding-top: 4px;
+}
+
+.advanced summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.92rem;
+  margin-bottom: 6px;
 }

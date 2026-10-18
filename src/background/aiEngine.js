@@ -3,7 +3,10 @@
   const Rito = (root.Rito = root.Rito || {});
 
   const API_URL = "https://api.groq.com/openai/v1/chat/completions";
+  const TRANSCRIBE_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
   const DEFAULT_TIMEOUT_MS = 12000;
+  const TRANSCRIBE_TIMEOUT_MS = 10000;
+  const NO_SPEECH_THRESHOLD = 0.6;
   const SUMMARY_MIN_WORDS = 20;
   const SUMMARY_MAX_WORDS = 30;
 
@@ -494,6 +497,135 @@
     return { summary: normalized, source: "network" };
   }
 
+  function base64ToBlob(base64, mimeType) {
+    const binary = atob(String(base64 || ""));
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new Blob([bytes], { type: mimeType || "audio/wav" });
+  }
+
+  function toWhisperLanguage(locale) {
+    const code = String(locale || "")
+      .trim()
+      .toLowerCase()
+      .split(/[-_]/)[0];
+    return /^[a-z]{2,3}$/.test(code) ? code : "";
+  }
+
+  // Whisper uses the prompt as preceding context, which biases spelling
+  // toward the wake phrase and command vocabulary.
+  function buildTranscriptionPrompt(hotword) {
+    const custom = toSafeString(hotword).toLowerCase();
+    const lines = ["Hey Rito, scroll down."];
+    if (custom && custom !== "hey rito") {
+      lines.push(`${custom.charAt(0).toUpperCase()}${custom.slice(1)}, go back.`);
+    }
+    return lines
+      .concat([
+        "Hey Rito, open a new tab. Go back. Scroll up. Click search.",
+        "Show numbers. Start dictation. Stop dictation. Summarize this page.",
+        "Switch tab. Close tab. Search for",
+      ])
+      .join(" ");
+  }
+
+  async function transcribeAudio(options) {
+    const opts = options || {};
+    if (!opts.audioBase64) {
+      throw new Error("No audio provided.");
+    }
+
+    const form = new FormData();
+    form.append(
+      "file",
+      base64ToBlob(opts.audioBase64, opts.mimeType),
+      "audio.wav",
+    );
+    form.append("model", toSafeString(opts.model, "whisper-large-v3-turbo"));
+    form.append("response_format", "verbose_json");
+    form.append("temperature", "0");
+    form.append("prompt", buildTranscriptionPrompt(opts.hotword));
+
+    const language = toWhisperLanguage(opts.language);
+    if (language) {
+      form.append("language", language);
+    }
+
+    const timeoutMs = Math.max(
+      3000,
+      Number(opts.timeoutMs || TRANSCRIBE_TIMEOUT_MS),
+    );
+    const controller = new AbortController();
+    const timeoutId = root.setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(TRANSCRIBE_URL, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${opts.apiKey}` },
+        body: form,
+        signal: controller.signal,
+      });
+
+      if (response.status === 429) {
+        const retryAfter = Number(response.headers.get("retry-after") || 0);
+        const error = new Error("Groq transcription rate limit reached.");
+        error.code = "rate_limited";
+        error.retryAfterMs = Math.max(2000, retryAfter * 1000 || 10000);
+        throw error;
+      }
+
+      if (!response.ok) {
+        const responseText = await response.text();
+        const error = new Error(
+          `Groq transcription failed (${response.status}): ${String(
+            responseText || "",
+          )
+            .slice(0, 220)
+            .trim()}`,
+        );
+        error.code = response.status === 401 ? "invalid-api-key" : "network";
+        throw error;
+      }
+
+      const json = await response.json();
+      const segments = Array.isArray(json && json.segments)
+        ? json.segments
+        : [];
+
+      let confidence = 0;
+      let noSpeech = false;
+      if (segments.length) {
+        const meanLogProb =
+          segments.reduce((sum, seg) => sum + Number(seg.avg_logprob || 0), 0) /
+          segments.length;
+        confidence = Math.max(0, Math.min(1, Math.exp(meanLogProb)));
+        noSpeech = segments.every(
+          (seg) => Number(seg.no_speech_prob || 0) > NO_SPEECH_THRESHOLD,
+        );
+      }
+
+      return {
+        text: String((json && json.text) || "").trim(),
+        confidence,
+        noSpeech,
+      };
+    } catch (error) {
+      if (error && error.name === "AbortError") {
+        const timeoutError = new Error("Groq transcription timed out.");
+        timeoutError.code = "network-timeout";
+        throw timeoutError;
+      }
+      if (error && !error.code) {
+        error.code = "network";
+      }
+      throw error;
+    } finally {
+      root.clearTimeout(timeoutId);
+    }
+  }
+
   function clearCache() {
     intentCache.clear();
     summaryCache.clear();
@@ -504,6 +636,7 @@
   Rito.aiEngine = {
     parseIntent,
     summarizePage,
+    transcribeAudio,
     clearCache,
   };
 })(typeof globalThis !== "undefined" ? globalThis : window);

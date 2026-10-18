@@ -14,7 +14,15 @@ Rito is a Manifest V3 Chrome extension for voice-first browsing, dictation, page
 
 - Google Chrome (or another Chromium browser with extension developer mode).
 - Microphone access allowed in the browser.
-- Optional: a Groq API key for AI intent parsing and AI summarization.
+- A free Groq API key (https://console.groq.com/keys). Voice recognition uses Groq's Whisper (`whisper-large-v3-turbo`); the same key powers AI intent parsing and summarization.
+
+## Speech recognition
+
+Rito records audio locally, detects when you start and stop speaking (energy-based voice activity detection), and sends each utterance as a 16 kHz WAV to Groq Whisper via the service worker. Whisper is far more accurate than the browser's Web Speech API, especially with accents, and the transcription prompt biases it toward "hey rito" and command words.
+
+- Each phrase appears roughly 0.3-0.8s after you stop speaking (there is no word-by-word live transcript).
+- Groq's free tier has rate limits (roughly 20 requests/minute and 2,000/day for Whisper). If you hit one, Rito pauses listening briefly and resumes automatically.
+- The "Microphone sensitivity threshold" setting controls how loud speech must be to be picked up.
 
 ## How to run (load the extension)
 
@@ -45,7 +53,7 @@ In commands mode, examples include:
 - hide numbers
 - summarize this page
 
-## AI setup (optional)
+## Groq setup
 
 1. Open the extension popup and click Settings.
 2. In AI intent and summarization:

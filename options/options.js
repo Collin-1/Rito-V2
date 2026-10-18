@@ -11,6 +11,7 @@
   const resetBtn = root.document.getElementById("resetBtn");
 
   const languageEl = root.document.getElementById("commandLanguage");
+  const sttModelEl = root.document.getElementById("sttModel");
   const sensitivityEl = root.document.getElementById("microphoneSensitivity");
   const sensitivityValueEl = root.document.getElementById(
     "microphoneSensitivityValue",
@@ -110,9 +111,24 @@
       .filter((entry) => entry.phrase && entry.command);
   }
 
+  // Keeps a previously saved custom model selectable instead of silently dropping it.
+  function setSelectValue(selectEl, value) {
+    const exists = Array.from(selectEl.options).some(
+      (option) => option.value === value,
+    );
+    if (!exists && value) {
+      const option = root.document.createElement("option");
+      option.value = value;
+      option.textContent = `${value} (custom)`;
+      selectEl.appendChild(option);
+    }
+    selectEl.value = value;
+  }
+
   function applyToForm(settings) {
     const merged = Object.assign({}, defaults, settings || {});
     languageEl.value = merged.commandLanguage;
+    setSelectValue(sttModelEl, merged.sttModel || defaults.sttModel);
     sensitivityEl.value = String(merged.microphoneSensitivity);
     sensitivityValueEl.textContent = String(merged.microphoneSensitivity);
     continuousListeningEl.checked = Boolean(merged.continuousListening);
@@ -127,7 +143,7 @@
     debugModeEl.checked = Boolean(merged.debugMode);
     commandCooldownMsEl.value = String(merged.commandCooldownMs);
     aiIntentEnabledEl.checked = Boolean(merged.aiIntentEnabled);
-    aiModelEl.value = merged.aiModel || defaults.aiModel;
+    setSelectValue(aiModelEl, merged.aiModel || defaults.aiModel);
     aiRequestDebounceMsEl.value = String(merged.aiRequestDebounceMs);
     aiCacheTtlMsEl.value = String(merged.aiCacheTtlMs);
     renderCustomCommands(merged.customCommands || []);
@@ -156,7 +172,7 @@
     }
 
     apiKeyStateEl.textContent =
-      "No API key is saved. Add one to enable AI actions.";
+      "No API key saved. Voice recognition will not work until you add one.";
   }
 
   function applyAiConfig(aiConfig) {
@@ -205,6 +221,7 @@
 
     const payload = {
       commandLanguage: languageEl.value,
+      sttModel: sttModelEl.value || defaults.sttModel,
       microphoneSensitivity: Number(sensitivityEl.value),
       continuousListening: continuousListeningEl.checked,
       commandActivationMode: commandActivationModeEl.value,
@@ -212,7 +229,7 @@
       debugMode: debugModeEl.checked,
       commandCooldownMs: Number(commandCooldownMsEl.value),
       aiIntentEnabled: aiIntentEnabledEl.checked,
-      aiModel: aiModelEl.value.trim() || defaults.aiModel,
+      aiModel: aiModelEl.value || defaults.aiModel,
       aiRequestDebounceMs: Number(aiRequestDebounceMsEl.value),
       aiCacheTtlMs: Number(aiCacheTtlMsEl.value),
       customCommands: readCustomCommands(),

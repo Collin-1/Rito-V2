@@ -190,6 +190,34 @@ async function summarizeWithAi(payload) {
   return okResponse("Page summary generated", result.summary);
 }
 
+// Speech-to-text is core functionality, so it is not gated by aiIntentEnabled.
+async function transcribeWithGroq(payload) {
+  const aiConfig = await getAiConfig();
+  if (!aiConfig.apiKey) {
+    return Object.assign(errorResponse("Groq API key is not configured."), {
+      code: "no-api-key",
+    });
+  }
+
+  const settings = await Rito.storage.getSettings();
+  try {
+    const result = await Rito.aiEngine.transcribeAudio({
+      apiKey: aiConfig.apiKey,
+      model: settings.sttModel,
+      audioBase64: payload && payload.audioBase64,
+      mimeType: payload && payload.mimeType,
+      language: settings.commandLanguage,
+      hotword: settings.hotword,
+    });
+    return okResponse("Audio transcribed", result);
+  } catch (error) {
+    return Object.assign(errorResponse(String(error && error.message)), {
+      code: (error && error.code) || "network",
+      retryAfterMs: error && error.retryAfterMs,
+    });
+  }
+}
+
 function getCommandCooldownMs() {
   return 250;
 }
@@ -608,6 +636,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       }
       case Rito.MESSAGE_TYPES.AI_SUMMARIZE_PAGE: {
         const result = await summarizeWithAi(payload);
+        sendResponse(result);
+        return;
+      }
+      case Rito.MESSAGE_TYPES.STT_TRANSCRIBE: {
+        const result = await transcribeWithGroq(payload);
         sendResponse(result);
         return;
       }
